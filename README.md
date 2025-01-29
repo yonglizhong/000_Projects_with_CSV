@@ -1,4 +1,4 @@
-# **Projects with CSV
+# Projects with CSV
 
 This repo consists of projects that work with data written in csv format.
 
