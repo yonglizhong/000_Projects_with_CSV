@@ -6,142 +6,114 @@
 #include <sstream>
 #include <algorithm>
 #include <unordered_set>
-#include <stdint.h> 
+#include <chrono>
+#include <conio.h>
 
 using namespace std;
 
 struct CsvRow {
     string raw_line;
-    string normalized;
     double time_ms;
-    bool needs_trimming;
     
     bool operator<(const CsvRow& other) const {
         return time_ms < other.time_ms;
     }
 };
 
-// Returns normalized line and whether trimming occurred
-pair<string, bool> normalize(const string& line) {
-    stringstream ss(line);
-    string segment;
-    vector<string> parts;
-    bool trimmed = false;
+const map<int, string> PATH_OPTIONS = {
+    {1, "P:/Fehler Historie & Wartungsplan der Anlagen/1_AG1A/2024/"},
+    {2, "P:/Fehler Historie & Wartungsplan der Anlagen/2_SL1B/2024/"},
+    {3, "P:/Fehler Historie & Wartungsplan der Anlagen/3_SL1A/2024/"},
+    {4, "P:/Fehler Historie & Wartungsplan der Anlagen/4_SEED1A/2024/"},
+    {5, "P:/Fehler Historie & Wartungsplan der Anlagen/5_DECK1A/2024/"},
+    {6, "P:/Fehler Historie & Wartungsplan der Anlagen/6_ISD1A/2024/"}
+};
+
+string get_full_path() {
+    int choice;
+    cout << "Choose a file path (1-6): ";
+    cin >> choice;
+    cin.ignore();
     
-    while (getline(ss, segment, ';')) {
-        string original = segment;
-        
-        // Remove quotes
-        if (!segment.empty() && segment.front() == '"' && segment.back() == '"') {
-            segment = segment.substr(1, segment.size() - 2);
-        }
-        
-        // Check and trim whitespace
-        size_t first = segment.find_first_not_of(" \t");
-        size_t last = segment.find_last_not_of(" \t");
-        if (first != string::npos) {
-            string trimmed_seg = segment.substr(first, (last - first + 1));
-            if (trimmed_seg != segment) {
-                trimmed = true;
-            }
-            segment = trimmed_seg;
-        } else {
-            segment.clear();
-        }
-        
-        if (!segment.empty()) {
-            parts.push_back(segment);
-        }
+    if (PATH_OPTIONS.find(choice) != PATH_OPTIONS.end()) {
+        return PATH_OPTIONS.at(choice);
     }
     
-    string result;
-    for (size_t i = 0; i < parts.size(); ++i) {
-        result += parts[i];
-        if (i != parts.size() - 1) result += ";";
-    }
-    
-    return {result, trimmed};
+    cout << "Invalid choice. Using current directory.\n";
+    return "";
 }
 
-vector<CsvRow> read_and_prepare(const string& filename, vector<pair<string, string>>& trimmed_lines) {
+vector<CsvRow> read_and_prepare(const string& filename) {
     vector<CsvRow> rows;
     ifstream file(filename);
+    if (!file) {
+        cerr << "Error opening file: " << filename << "\n";
+        return rows;
+    }
     string line;
-    
-    getline(file, line); // Skip header
+    getline(file, line);
     while (getline(file, line)) {
-        auto [normalized, was_trimmed] = normalize(line);
         size_t first_semi = line.find(';');
         double timestamp = stod(line.substr(0, first_semi));
-        
-        rows.push_back({line, normalized, timestamp, was_trimmed});
-        
-        if (was_trimmed) {
-            trimmed_lines.emplace_back(line, normalized);
-        }
+        rows.push_back({line, timestamp});
     }
-    
     return rows;
 }
 
 int main() {
-
-    uint16_t myCount = 0;
-
-    string file1, file2, output;
-    cout << "Enter first CSV file: ";
-    getline(cin, file1);
-    cout << "Enter second CSV file: ";
-    getline(cin, file2);
-    cout << "Enter output file name: ";
-    getline(cin, output);
-
-    // Track trimmed lines
-    vector<pair<string, string>> trimmed_lines;
-
-    // Read and combine data
-    auto data1 = read_and_prepare(file1, trimmed_lines);
-    auto data2 = read_and_prepare(file2, trimmed_lines);
-    vector<CsvRow> all_data;
-    all_data.reserve(data1.size() + data2.size());
-    all_data.insert(all_data.end(), data1.begin(), data1.end());
-    all_data.insert(all_data.end(), data2.begin(), data2.end());
-
-    // Sort by timestamp
-    sort(all_data.begin(), all_data.end());
-
-    // Deduplicate
-    vector<CsvRow> unique_data;
-    unordered_set<string> seen;
-    for (const auto& row : all_data) {
-        if (seen.insert(row.normalized).second) {
-            unique_data.push_back(row);
+    do {
+        auto start_time = chrono::high_resolution_clock::now();
+        
+        string base_path = get_full_path();
+        
+        string file1, file2, output;
+        cout << "Enter first CSV file name: ";
+        getline(cin, file1);
+        file1 = base_path + file1;
+        
+        cout << "Enter second CSV file name: ";
+        getline(cin, file2);
+        file2 = base_path + file2;
+        
+        cout << "Enter output file name: ";
+        getline(cin, output);
+        output = base_path + output;
+        
+        auto data1 = read_and_prepare(file1);
+        auto data2 = read_and_prepare(file2);
+        
+        vector<CsvRow> all_data;
+        all_data.reserve(data1.size() + data2.size());
+        all_data.insert(all_data.end(), data1.begin(), data1.end());
+        all_data.insert(all_data.end(), data2.begin(), data2.end());
+        
+        sort(all_data.begin(), all_data.end());
+        unordered_set<string> seen;
+        vector<CsvRow> unique_data;
+        int duplicate_count = 0;
+        for (const auto& row : all_data) {
+            if (seen.insert(row.raw_line).second) {
+                unique_data.push_back(row);
+            } else {
+                duplicate_count++;
+            }
         }
-    }
-
-    // Write output
-    ofstream out(output);
-    out << "\"Time_ms\";\"MsgProc\";\"StateAfter\";\"MsgClass\";\"MsgNumber\";"
-        << "\"Var1\";\"Var2\";\"Var3\";\"Var4\";\"Var5\";\"Var6\";\"Var7\";"
-        << "\"Var8\";\"TimeString\";\"MsgText\";\"PLC\"\n";
-    
-    for (const auto& row : unique_data) {
-        out << row.raw_line << "\n";
-    }
-
-    // Print trimming report
-    if (!trimmed_lines.empty()) {
-        cout << "\nWhitespace trimming occurred in " << trimmed_lines.size() << " rows:\n";
-        for (const auto& [original, trimmed] : trimmed_lines) {
-            myCount = myCount +1;
-            cout << "Original: " << original << "\n";
-            cout << "Trimmed:  " << trimmed << "\n\n";
+        
+        ofstream out(output);
+        out << "\"Time_ms\";\"MsgProc\";\"StateAfter\";\"MsgClass\";\"MsgNumber\";"
+            "\"Var1\";\"Var2\";\"Var3\";\"Var4\";\"Var5\";\"Var6\";\"Var7\";"
+            "\"Var8\";\"TimeString\";\"MsgText\";\"PLC\"\n";
+        for (const auto& row : unique_data) {
+            out << row.raw_line << "\n";
         }
-    } else {
-        cout << "\nNo whitespace trimming was needed.\n";
-    }
-
-    cout << "\nSorted and deduplicated file created: " << output << endl;
-    cout << "\nHow many were whitespace trimmed: " << myCount << endl;
+        
+        cout << "\nNumber of duplicate lines: " << duplicate_count << "\n";
+        
+        auto end_time = chrono::high_resolution_clock::now();
+        chrono::duration<double> duration = end_time - start_time;
+        cout << "\nExecution Time: " << duration.count() << " seconds\n";
+        
+        cout << "\nPress ESC to exit or any other key to process another file set...";
+    } while (_getch() != 27);
     return 0;
 }

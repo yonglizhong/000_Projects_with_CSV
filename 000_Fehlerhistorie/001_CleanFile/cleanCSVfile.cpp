@@ -11,7 +11,6 @@
 #include <sstream>
 #include <algorithm>
 
-// Cross-platform getch() implementation (same as before)
 #ifdef _WIN32
     #include <conio.h>
     int getchWrapper() { return _getch(); }
@@ -31,24 +30,35 @@
     }
 #endif
 
+struct PathConfig {
+    std::string inputPath;
+    std::string outputPath;
+};
+
+const std::vector<PathConfig> pathPresets = {
+    {"P:/Fehler Historie & Wartungsplan der Anlagen/1_AG1A/RawData/", "P:/Fehler Historie & Wartungsplan der Anlagen/1_AG1A/2024/"},      // Preset 1
+    {"P:/Fehler Historie & Wartungsplan der Anlagen/2_SL1B/RawData/", "P:/Fehler Historie & Wartungsplan der Anlagen/2_SL1B/2024/"},        // Preset 2
+    {"P:/Fehler Historie & Wartungsplan der Anlagen/3_SL1A/RawData/", "P:/Fehler Historie & Wartungsplan der Anlagen/3_SL1A/2024/"},  // Preset 3
+    {"P:/Fehler Historie & Wartungsplan der Anlagen/4_SEED1A/RawData/", "P:/Fehler Historie & Wartungsplan der Anlagen/4_SEED1A/2024/"},        // Preset 4
+    {"P:/Fehler Historie & Wartungsplan der Anlagen/5_DECK1A/RawData/", "P:/Fehler Historie & Wartungsplan der Anlagen/5_DECK1A/2024/"},    // Preset 5
+    {"P:/Fehler Historie & Wartungsplan der Anlagen/6_ISD1A/RawData/",  "P:/Fehler Historie & Wartungsplan der Anlagen/6_ISD1A/2024/"}     // Preset 6
+};
+
 struct ThreadResult {
     std::vector<std::string> outputLines;
     std::unordered_map<std::string, unsigned long long> criteriaCounts;
     unsigned long long removedCount = 0;
 };
 
-// New: Normalization function for deduplication
 std::string normalizeLine(const std::string& line) {
     std::stringstream ss(line);
     std::string segment;
     std::vector<std::string> parts;
     
     while (std::getline(ss, segment, ';')) {
-        // Remove quotes
         if (segment.size() >= 2 && segment.front() == '"' && segment.back() == '"') {
             segment = segment.substr(1, segment.size() - 2);
         }
-        // Trim whitespace
         segment.erase(0, segment.find_first_not_of(" \t"));
         segment.erase(segment.find_last_not_of(" \t") + 1);
         if (!segment.empty()) parts.push_back(segment);
@@ -62,7 +72,6 @@ std::string normalizeLine(const std::string& line) {
     return result;
 }
 
-// New: Function to extract Time_ms as double
 double extractTimeMs(const std::string& line) {
     size_t pos = line.find(';');
     if (pos == std::string::npos) return 0.0;
@@ -101,16 +110,35 @@ void processBlock(const std::vector<std::string>& lines,
 }
 
 int main() {
+    int pathChoice;
     std::string inputFilename, outputFilename;
-    std::cout << "Enter input CSV filename: ";
+    
+    std::cout << "Select path configuration (1-6):\n";
+    for(int i = 0; i < pathPresets.size(); ++i) {
+        std::cout << i+1 << ". Input: " << pathPresets[i].inputPath 
+                  << "\n   Output: " << pathPresets[i].outputPath << "\n";
+    }
+    std::cout << "Your choice: ";
+    std::cin >> pathChoice;
+    std::cin.ignore();
+
+    if(pathChoice < 1 || pathChoice > 6) {
+        std::cerr << "Invalid path selection!" << std::endl;
+        return 1;
+    }
+
+    std::cout << "Enter input filename (without path): ";
     std::getline(std::cin, inputFilename);
-    std::cout << "Enter output CSV filename: ";
+    std::cout << "Enter output filename (without path): ";
     std::getline(std::cin, outputFilename);
 
-    // Read input file with header separation
-    std::ifstream inputFile(inputFilename);
+    const PathConfig& config = pathPresets[pathChoice-1];
+    std::string fullInputPath = config.inputPath + inputFilename;
+    std::string fullOutputPath = config.outputPath + outputFilename;
+
+    std::ifstream inputFile(fullInputPath);
     if (!inputFile.is_open()) {
-        std::cerr << "Failed to open input file." << std::endl;
+        std::cerr << "Failed to open input file: " << fullInputPath << std::endl;
         return 1;
     }
 
@@ -119,21 +147,24 @@ int main() {
     if (std::getline(inputFile, headerLine)) {
         std::string line;
         while (std::getline(inputFile, line)) {
-            lines.push_back(line);
+            if (!line.empty()) lines.push_back(line);
         }
     }
     inputFile.close();
 
     std::vector<std::string> searchWords = {
-       "License Key",         // Example criteria
+        "License Key",         // Example criteria
         "berlast: Skript",    // Add more criteria as needed
         "berlast: Zu",
         "Adressfehler Steuerung",
-        "Es wurden", // Example additional search phrase            
+        "Es wurden", // Example additional search phrase  
+        "Fehlerzustand beendet",  
+        "Datensatzbearbeitung nicht",
+        "Warnung Thermoelement Bandheizer Zone",
+        "Fehler Bandheizer Heizkreis", 
         "Error SQL Time"
     };
 
-    // Multithreaded processing (same as before)
     unsigned int numThreads = std::thread::hardware_concurrency();
     if (numThreads == 0) numThreads = 2;
     if (lines.size() < numThreads) numThreads = lines.size();
@@ -157,10 +188,10 @@ int main() {
 
     for (auto& t : threads) t.join();
 
-    // Merge results
     std::vector<std::string> finalOutput;
     unsigned long long totalRemovedCount = 0;
     std::unordered_map<std::string, unsigned long long> finalCriteriaCounts;
+    
     for (const auto &result : threadResults) {
         totalRemovedCount += result.removedCount;
         finalOutput.insert(finalOutput.end(), result.outputLines.begin(), result.outputLines.end());
@@ -169,12 +200,10 @@ int main() {
         }
     }
 
-    // New: Sorting by Time_ms
     std::sort(finalOutput.begin(), finalOutput.end(), [](const std::string& a, const std::string& b) {
         return extractTimeMs(a) < extractTimeMs(b);
     });
 
-    // New: Deduplication
     std::unordered_set<std::string> seenLines;
     std::vector<std::string> dedupedOutput;
     for (const auto& line : finalOutput) {
@@ -185,10 +214,9 @@ int main() {
     }
     finalOutput = std::move(dedupedOutput);
 
-    // Write output
-    std::ofstream outputFile(outputFilename);
+    std::ofstream outputFile(fullOutputPath);
     if (!outputFile.is_open()) {
-        std::cerr << "Failed to open output file." << std::endl;
+        std::cerr << "Failed to open output file: " << fullOutputPath << std::endl;
         return 1;
     }
     outputFile << headerLine << "\n";
@@ -197,18 +225,18 @@ int main() {
     }
     outputFile.close();
 
-    // Output results
     auto endTime = std::chrono::steady_clock::now();
     std::chrono::duration<double> elapsedSeconds = endTime - startTime;
 
-    std::cout << "\nFile processed successfully!\n";
-    std::cout << "Total lines removed: " << totalRemovedCount << "\n";
-    std::cout << "Breakdown by criteria:\n";
+    std::cout << "\nProcessing complete!\n";
+    std::cout << "Total lines processed: " << lines.size() << "\n";
+    std::cout << "Lines removed: " << totalRemovedCount << "\n";
+    std::cout << "Unique lines saved: " << finalOutput.size() << "\n";
+    std::cout << "Execution time: " << elapsedSeconds.count() << " seconds\n";
+    std::cout << "Removal breakdown:\n";
     for (const auto &entry : finalCriteriaCounts) {
-        std::cout << "  \"" << entry.first << "\": " << entry.second << " occurrence(s)\n";
+        std::cout << "  " << entry.first << ": " << entry.second << "\n";
     }
-    std::cout << "Unique lines remaining: " << finalOutput.size() << "\n";
-    std::cout << "Execution time: " << elapsedSeconds.count() << " seconds.\n";
 
     std::cout << "\nPress ESC to exit...\n";
     while (true) {
